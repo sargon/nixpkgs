@@ -8,6 +8,7 @@ let
   openldap = pkgs.openldap;
 
   configFile = pkgs.writeText "slapd.conf" cfg.extraConfig;
+  configLDIF = pkgs.writeText "slapd-init.ldif" cfg.extraLDIF;
 
 in
 
@@ -52,11 +53,25 @@ in
         description = "The database directory.";
       };
 
+      dataDirs = mkOption {
+        type = types.listOf types.string;
+        default = [ ];
+        description = "Additional database directories.";
+      };
+
       configDir = mkOption {
         type = types.nullOr types.path;
         default = null;
         description = "Use this optional config directory instead of using slapd.conf";
         example = "/var/db/slapd.d";
+      };
+
+      extraLDIF = mkOption {
+        type = types.nullOr types.lines;
+        default = "";
+        description = "
+          slapd configuration directory initalisation
+        ";
       };
 
       extraConfig = mkOption {
@@ -99,8 +114,19 @@ in
       preStart = ''
         mkdir -p /var/run/slapd
         chown -R ${cfg.user}:${cfg.group} /var/run/slapd
-        mkdir -p ${cfg.dataDir}
-        chown -R ${cfg.user}:${cfg.group} ${cfg.dataDir}
+        ${builtins.foldl' (md: dataDir: md +
+          ''
+            mkdir -p ${dataDir} 
+            chown -R ${cfg.user}:${cfg.group} ${dataDir}
+          ''
+        ) "" ([ cfg.dataDir ] ++ cfg.dataDirs)}
+        ${if cfg.configDir != null then ''
+          mkdir -p ${cfg.configDir}
+          if ! test -e "${cfg.configDir}/cn=config/" ; then
+            ${openldap.out}/bin/slapadd -F ${cfg.configDir} -l ${configLDIF} -n0
+          fi
+          chown -R ${cfg.user}:${cfg.group} ${cfg.configDir}
+        '' else null}
       '';
       serviceConfig.ExecStart = "${openldap.out}/libexec/slapd -u ${cfg.user} -g ${cfg.group} -d 0 -h \"${concatStringsSep " " cfg.urlList}\" ${if cfg.configDir == null then "-f "+configFile else "-F "+cfg.configDir}";
     };
